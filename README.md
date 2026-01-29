@@ -2,11 +2,11 @@
 - Built on top of another AI
 
 # AuTron AI Models:
-- 🏆 AuTron **Ultra** (Titan)
-- 💎 AuTron **Pro** (Elite)
-- 🌀 AuTron **Plus** (Adaptive)
-- ⚙️ AuTron **Neo** (Standard)
-- 🍃 AuTron **Leaf** (Lightweight)
+- 🏆 AuTron **Ultra 3** (Titan) – The absolute pinnacle of the series for complex reasoning.
+- 💎 AuTron **Pro 3** (Elite) – The professional standard for advanced, high-logic tasks.
+- 🌀 AuTron **Neo 3** (Adaptive) – The next-gen versatile engine for dynamic daily use.
+- ⚙️ AuTron **Nano 3** (Standard) – The core foundational model for reliable performance.
+- 🍃 AuTron **Leaf** 3 (Lightweight) – The most efficient, small-footprint version for speed.
 
 
 # Minimum Requirements
