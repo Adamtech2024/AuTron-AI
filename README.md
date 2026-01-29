@@ -5,7 +5,7 @@
 - 🏆 AuTron **Ultra** (Titan)
 - 💎 AuTron **Pro** (Elite)
 - 🌀 AuTron **Plus** (Adaptive)
-- ⚙️ AuTron **Nano** (Standard)
+- ⚙️ AuTron **Neo** (Standard)
 - 🍃 AuTron **Leaf** (Lightweight)
 
 
