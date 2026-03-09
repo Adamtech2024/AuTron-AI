@@ -40,7 +40,7 @@ Balanced for users who need high-tier intelligence with faster processing than t
 - **Pro (1.2B + 2.6B)**: High-intelligence mode using the powerful 2.6B primary.
 - **Ultra (Standardized)**: Supports advanced synthesis logic same as the flagship.
 
-## ⚡ AuTron 4o (Omni)
+## ⚡ AuTron 4o (Omni) (**NEW!**)
 **The Web Specialist: Real-Time Intelligence & Global Synthesis**
 The all-encompassing flagship version optimized for live web searching and multi-source integration.
 - **Normal (SmolLM 1.7B)**: A unified, high-logic engine that handles both real-time web data extraction and final response synthesis in a single pass.
