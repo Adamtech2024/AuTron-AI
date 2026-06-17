@@ -85,7 +85,7 @@ class SearchEngine:
                             if url and url not in seen_urls:
                                 results.append({'t': r.get('title'), 'b': r.get('body'), 'u': url})
                                 seen_urls.add(url)
-                    except: continue 
+                    except Exception: continue 
                     if len(results) >= 12: break
             return results
 

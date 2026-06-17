@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 Requirements: pip install ollama duckduckgo-search rich
 """
 
-import os, sys, json, gzip, time, socket, hashlib, warnings, random, threading
+import os, sys, json, gzip, time, socket, hashlib, warnings, random, threading, subprocess, re as _re
 from pathlib import Path
 from typing import Optional, List, Dict
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -85,23 +85,23 @@ try:
     import tkinter as tk
     from tkinter import filedialog
     TK_AVAILABLE = True
-except: TK_AVAILABLE = False
+except Exception: TK_AVAILABLE = False
 
 try:
     from rich.console import Console
     from rich.panel import Panel
     RICH_AVAILABLE = True
-except: RICH_AVAILABLE = False
+except Exception: RICH_AVAILABLE = False
 
 try:
     from ollama import chat
     OLLAMA_AVAILABLE = True
-except: OLLAMA_AVAILABLE = False
+except Exception: OLLAMA_AVAILABLE = False
 
 try:
     from duckduckgo_search import DDGS
     SEARCH_AVAILABLE = True
-except: SEARCH_AVAILABLE = False
+except Exception: SEARCH_AVAILABLE = False
 
 
 # ===============================================================================
@@ -137,7 +137,7 @@ class Output:
         else: print(text, end=end, flush=True)
     
     def clear(self):
-        os.system('cls' if os.name == 'nt' else 'clear')
+        subprocess.run(['cls' if os.name == 'nt' else 'clear'], shell=False, check=False)
 
 out = Output()
 
@@ -145,7 +145,7 @@ def is_online() -> bool:
     try:
         socket.create_connection(("8.8.8.8", 53), timeout=0.3).close()
         return True
-    except: return False
+    except Exception: return False
 
 # ===============================================================================
 # KNOWLEDGE
@@ -164,14 +164,14 @@ class Knowledge:
                         if key not in data:
                             data[key] = {} if key in ["facts", "searches"] else []
                     return data
-            except: pass
+            except Exception: pass
         return {"facts": {}, "searches": {}, "learned": [], "training": []}
     
     def save(self):
         try:
             with gzip.open(KNOWLEDGE_FILE, 'wt', encoding='utf-8') as f:
                 json.dump(self.data, f, separators=(',', ':'))
-        except: pass
+        except Exception: pass
 
     def export(self) -> str:
         DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
@@ -183,7 +183,9 @@ class Knowledge:
     
     def import_file(self, path: str) -> str:
         try:
-            p = Path(path)
+            p = Path(path).resolve()
+            if not str(p).startswith(str(Path.home())):
+                return "❌ Import blocked: path must be within your home directory"
             if p.suffix == '.gz':
                 with gzip.open(p, 'rt', encoding='utf-8') as f:
                     data = json.load(f)
@@ -225,9 +227,9 @@ class TurboSearch:
             with ThreadPoolExecutor(max_workers=5) as executor:
                 future = executor.submit(self._fetch, query, max_results)
                 try: results = future.result(timeout=4)
-                except: pass
+                except Exception: pass
             return results
-        except: return []
+        except Exception: return []
     
     def _fetch(self, query: str, max_results: int) -> List[Dict]:
         results = []
@@ -275,12 +277,15 @@ class AIBuilder:
         self.k = knowledge
     def build(self, output_name: str = None) -> str:
         DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
-        filename = f"{output_name or 'autron_built'}.py"
+        safe_name = _re.sub(r'[^a-zA-Z0-9_\-]', '_', output_name or 'autron_built')
+        filename = f"{safe_name}.py"
         filepath = DOWNLOAD_DIR / filename
+        if not str(filepath.resolve()).startswith(str(DOWNLOAD_DIR.resolve())):
+            return "❌ Build blocked: invalid output name"
         with open(__file__, 'r', encoding='utf-8') as f:
             src = f.read()
-        baked_data = json.dumps(self.k.data)
-        src = src.replace('data = self._load()', f'data = {baked_data}')
+        baked_json = json.dumps(self.k.data)
+        src = src.replace('data = self._load()', f'data = json.loads({baked_json!r})')
         Path(filepath).write_text(src, encoding='utf-8')
         return f"ðŸ—ï¸ Built AI: {filepath}"
 
@@ -294,14 +299,14 @@ class Conversation:
             try:
                 with open(HISTORY_FILE, 'r', encoding='utf-8') as f:
                     self.history = json.load(f)[-10:]
-            except: pass
+            except Exception: pass
     def add(self, role, content):
         self.history.append({"role": role, "content": content[:500]})
         if len(self.history) > 20: self.history = self.history[-10:]
         try:
             with open(HISTORY_FILE, 'w', encoding='utf-8') as f:
                 json.dump(self.history, f)
-        except: pass
+        except Exception: pass
     def clear(self): self.history = []
 
 # ===============================================================================
@@ -352,7 +357,7 @@ class AuTron:
             try:
                 resp = chat(model=model, messages=msgs, stream=False)
                 results[i] = resp.get('message', {}).get('content', '')
-            except: pass
+            except Exception: pass
             
         with ThreadPoolExecutor(max_workers=len(models)) as ex:
             f = [ex.submit(_run_model, i, m) for i, m in enumerate(models)]
@@ -374,7 +379,7 @@ class AuTron:
                     out.stream_print(tok)
                 out.print("")
                 return combined
-            except: pass
+            except Exception: pass
         if valid_results:
             out.stream_print(valid_results[0])
             out.print("")
