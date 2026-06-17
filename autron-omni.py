@@ -8,35 +8,60 @@
 Requirements: pip install ollama duckduckgo-search rich
 """
 
+import logging
 import os, sys, json, time, re, asyncio, gzip, base64, warnings
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Dict
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from duckduckgo_search import DDGS
-from ollama import chat
-from rich.console import Console
-from rich.panel import Panel
-from rich.live import Live
-from rich.markdown import Markdown
+
+log = logging.getLogger("autron-omni")
+logging.basicConfig(level=logging.WARNING, format="%(name)s: %(message)s")
+
+try:
+    from duckduckgo_search import DDGS
+    SEARCH_AVAILABLE = True
+except ImportError:
+    SEARCH_AVAILABLE = False
+
+try:
+    from ollama import chat
+    OLLAMA_AVAILABLE = True
+except ImportError:
+    OLLAMA_AVAILABLE = False
+
+try:
+    from rich.console import Console
+    from rich.panel import Panel
+    from rich.live import Live
+    from rich.markdown import Markdown
+    RICH_AVAILABLE = True
+except ImportError:
+    RICH_AVAILABLE = False
 
 # ===============================================================================
 # UI / FORMATTING
 # ===============================================================================
-console = Console()
+console = Console() if RICH_AVAILABLE else None
 
 class UI:
     @staticmethod
     def print(text, style="white"):
-        console.print(text, style=style)
+        if console:
+            console.print(text, style=style)
+        else:
+            print(text)
     
     @staticmethod
     def stream_print(text):
-        console.print(text, end="")
-        try:
-            console.file.flush()
-        except Exception:
-            pass
+        if console:
+            console.print(text, end="")
+            try:
+                console.file.flush()
+            except OSError:
+                pass
+        else:
+            print(text, end="", flush=True)
 
 # ===============================================================================
 # CONFIG
@@ -55,6 +80,9 @@ DATA_DIR.mkdir(exist_ok=True)
 class SearchEngine:
     async def get_context(self, query: str) -> List[Dict]:
         """Deep Search Execution with Source Prioritization."""
+        if not SEARCH_AVAILABLE:
+            log.warning("Search unavailable: duckduckgo-search not installed")
+            return []
         def _sync_search():
             # Smart Query Expansion
             queries = [query]
@@ -85,7 +113,9 @@ class SearchEngine:
                             if url and url not in seen_urls:
                                 results.append({'t': r.get('title'), 'b': r.get('body'), 'u': url})
                                 seen_urls.add(url)
-                    except: continue 
+                    except Exception as e:
+                        log.warning("Search query failed: %s", e)
+                        continue
                     if len(results) >= 12: break
             return results
 
@@ -229,6 +259,10 @@ Provide a direct, authoritative answer based on the source data above.
 
         msgs = [{"role": "system", "content": sys_prompt}] + self.memory.history + [{"role": "user", "content": final_user_msg}]
         
+        if not OLLAMA_AVAILABLE:
+            UI.print("❌ Ollama not available. Install with: pip install ollama", style="red")
+            return
+
         UI.print(f"🧠 [Omni] Generating Synthesis...", style="italic green")
         full_res = ""
         try:
@@ -240,8 +274,16 @@ Provide a direct, authoritative answer based on the source data above.
             self.memory.add("assistant", full_res)
         except Exception as e:
             UI.print(f"❌ Error: {e}", style="red")
+            self.memory.add("user", q)
 
 async def main():
+    if not SEARCH_AVAILABLE:
+        print("❌ duckduckgo-search not available. Install with: pip install duckduckgo-search")
+        return
+    if not RICH_AVAILABLE:
+        print("❌ rich not available. Install with: pip install rich")
+        return
+
     omni = AuTronOmni()
     console.print(Panel.fit(f"[bold cyan]{VERSION}[/bold cyan]\n[italic]Type 'exit' to quit[/italic]", border_style="blue"))
     
@@ -252,7 +294,9 @@ async def main():
             if not user_input.strip(): continue
             await omni.handle_query(user_input)
         except KeyboardInterrupt: break
-        except Exception as e: console.print(f"❌ Error: {e}", style="red")
+        except Exception as e:
+            log.error("Unexpected error: %s", e, exc_info=True)
+            console.print(f"❌ Error: {e}", style="red")
 
 if __name__ == "__main__":
     asyncio.run(main())

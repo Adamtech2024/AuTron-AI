@@ -9,10 +9,14 @@ from datetime import datetime, timezone
 Requirements: pip install ollama duckduckgo-search rich
 """
 
+import logging
 import os, sys, json, gzip, time, socket, hashlib, warnings, random, threading
 from pathlib import Path
 from typing import Optional, List, Dict
 from concurrent.futures import ThreadPoolExecutor, as_completed
+
+log = logging.getLogger("autron-neo")
+logging.basicConfig(level=logging.WARNING, format="%(name)s: %(message)s")
 
 def get_system_prompt(model_name: str) -> str:
     current_date_str = datetime.now(timezone.utc).strftime("%A, %B %d, %Y")
@@ -59,23 +63,23 @@ try:
     import tkinter as tk
     from tkinter import filedialog
     TK_AVAILABLE = True
-except: TK_AVAILABLE = False
+except ImportError: TK_AVAILABLE = False
 
 try:
     from rich.console import Console
     from rich.panel import Panel
     RICH_AVAILABLE = True
-except: RICH_AVAILABLE = False
+except ImportError: RICH_AVAILABLE = False
 
 try:
     from ollama import chat
     OLLAMA_AVAILABLE = True
-except: OLLAMA_AVAILABLE = False
+except ImportError: OLLAMA_AVAILABLE = False
 
 try:
     from duckduckgo_search import DDGS
     SEARCH_AVAILABLE = True
-except: SEARCH_AVAILABLE = False
+except ImportError: SEARCH_AVAILABLE = False
 
 
 # ===============================================================================
@@ -118,7 +122,8 @@ def is_online() -> bool:
     try:
         socket.create_connection(("8.8.8.8", 53), timeout=0.3).close()
         return True
-    except: return False
+    except OSError:
+        return False
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # KNOWLEDGE
@@ -138,22 +143,27 @@ class Knowledge:
                         if key not in data:
                             data[key] = {} if key in ["facts", "searches"] else []
                     return data
-            except: pass
+            except (OSError, json.JSONDecodeError, gzip.BadGzipFile) as e:
+                log.warning("Failed to load knowledge from %s: %s", KNOWLEDGE_FILE, e)
         return {"facts": {}, "searches": {}, "learned": [], "training": []}
     
     def save(self):
         try:
             with gzip.open(KNOWLEDGE_FILE, 'wt', encoding='utf-8') as f:
                 json.dump(self.data, f, separators=(',', ':'))
-        except: pass
+        except OSError as e:
+            log.warning("Failed to save knowledge to %s: %s", KNOWLEDGE_FILE, e)
 
     def export(self) -> str:
-        DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
-        filename = f"autron_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json.gz"
-        filepath = DOWNLOAD_DIR / filename
-        with gzip.open(filepath, 'wt', encoding='utf-8') as f:
-            json.dump(self.data, f)
-        return f"📂 Exported: {filepath} ({filepath.stat().st_size/1024:.1f}KB)"
+        try:
+            DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
+            filename = f"autron_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json.gz"
+            filepath = DOWNLOAD_DIR / filename
+            with gzip.open(filepath, 'wt', encoding='utf-8') as f:
+                json.dump(self.data, f)
+            return f"📂 Exported: {filepath} ({filepath.stat().st_size/1024:.1f}KB)"
+        except OSError as e:
+            return f"❌ Export failed: {e}"
     
     def import_file(self, path: str) -> str:
         try:
@@ -199,10 +209,16 @@ class TurboSearch:
             results = []
             with ThreadPoolExecutor(max_workers=5) as executor:
                 future = executor.submit(self._fetch, query, max_results)
-                try: results = future.result(timeout=4)
-                except: pass
+                try:
+                    results = future.result(timeout=4)
+                except TimeoutError:
+                    log.warning("Search timed out for query: %s", query[:80])
+                except Exception as e:
+                    log.warning("Search failed for query '%s': %s", query[:80], e)
             return results
-        except: return []
+        except Exception as e:
+            log.warning("Search executor error: %s", e)
+            return []
     
     def _fetch(self, query: str, max_results: int) -> List[Dict]:
         results = []
@@ -250,15 +266,18 @@ class AIBuilder:
     def __init__(self, knowledge):
         self.k = knowledge
     def build(self, output_name: str = None) -> str:
-        DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
-        filename = f"{output_name or 'autron_built'}.py"
-        filepath = DOWNLOAD_DIR / filename
-        with open(__file__, 'r', encoding='utf-8') as f:
-            src = f.read()
-        baked_data = json.dumps(self.k.data)
-        src = src.replace('data = self._load()', f'data = {baked_data}')
-        Path(filepath).write_text(src, encoding='utf-8')
-        return f"🛠️ Built AI: {filepath}"
+        try:
+            DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
+            filename = f"{output_name or 'autron_built'}.py"
+            filepath = DOWNLOAD_DIR / filename
+            with open(__file__, 'r', encoding='utf-8') as f:
+                src = f.read()
+            baked_data = json.dumps(self.k.data)
+            src = src.replace('data = self._load()', f'data = {baked_data}')
+            Path(filepath).write_text(src, encoding='utf-8')
+            return f"🛠️ Built AI: {filepath}"
+        except OSError as e:
+            return f"❌ Build failed: {e}"
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # CONVERSATION
@@ -271,14 +290,16 @@ class Conversation:
             try:
                 with open(HISTORY_FILE, 'r', encoding='utf-8') as f:
                     self.history = json.load(f)[-10:]
-            except: pass
+            except (OSError, json.JSONDecodeError) as e:
+                log.warning("Failed to load conversation history: %s", e)
     def add(self, role, content):
         self.history.append({"role": role, "content": content[:500]})
         if len(self.history) > 20: self.history = self.history[-10:]
         try:
             with open(HISTORY_FILE, 'w', encoding='utf-8') as f:
                 json.dump(self.history, f)
-        except: pass
+        except OSError as e:
+            log.warning("Failed to save conversation history: %s", e)
     def clear(self): self.history = []
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -326,11 +347,14 @@ class AuTron:
         out.stream_print("🧠 Thinking...\n🌀 ")
         results = [""] * len(models)
         
+        errors = []
         def _run_model(i, model):
             try:
                 resp = chat(model=model, messages=msgs, stream=False)
                 results[i] = resp.get('message', {}).get('content', '')
-            except: pass
+            except Exception as e:
+                errors.append(f"Model {model}: {e}")
+                log.warning("Model %s failed: %s", model, e)
             
         with ThreadPoolExecutor(max_workers=len(models)) as ex:
             f = [ex.submit(_run_model, i, m) for i, m in enumerate(models)]
@@ -352,11 +376,14 @@ class AuTron:
                     out.stream_print(tok)
                 out.print("")
                 return combined
-            except: pass
+            except Exception as e:
+                log.warning("Synthesis failed, falling back to first result: %s", e)
         if valid_results:
             out.stream_print(valid_results[0])
             out.print("")
             return valid_results[0]
+        if errors:
+            out.print(f"\n❌ All models failed: {'; '.join(errors)}")
         return "Models offline."
 
     def query(self, q, force_mode=None):
