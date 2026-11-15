@@ -109,10 +109,10 @@ except: SEARCH_AVAILABLE = False
 # CONFIG - LIGHTWEIGHT LEAF
 # ===============================================================================
 MODELS = {
-    "fast": "sam860/LFM2:350m",
-    "think": ["sam860/LFM2:350m", "sam860/LFM2:350m"],
-    "pro": ["sam860/LFM2:350m", "sam860/LFM2:350m"],
-    "default": "sam860/LFM2:350m"
+    "fast": "LiquidAI/LFM2-350M",
+    "think": ["LiquidAI/LFM2-350M", "LiquidAI/LFM2-350M"],
+    "pro": ["LiquidAI/LFM2-350M", "LiquidAI/LFM2-350M"],
+    "default": "LiquidAI/LFM2-350M"
 }
 VERSION = "AuTron 4 Leaf (Lightweight)"
 DATA_DIR = Path(__file__).parent / ".autron-storage"

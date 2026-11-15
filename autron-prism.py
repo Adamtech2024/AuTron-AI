@@ -108,11 +108,11 @@ except: SEARCH_AVAILABLE = False
 # CONFIG
 # ===============================================================================
 MODELS = {
-    "fast": "sam860/LFM2:350m",
-    "think": ["sam860/LFM2:1.2b", "sam860/LFM2:1.2b"],
-    "pro": ["sam860/LFM2:1.2b", "sam860/LFM2:2.6b"],
-    "ultra": ["sam860/LFM2:1.2b", "sam860/LFM2:2.6b", "sam860/LFM2:700m"],
-    "default": "sam860/LFM2:2.6b"
+    "fast": "LiquidAI/LFM2-350M",
+    "think": ["LiquidAI/LFM2-1.2B", "LiquidAI/LFM2-1.2B"],
+    "pro": ["LiquidAI/LFM2-1.2B", "LiquidAI/LFM2-2.6B"],
+    "ultra": ["LiquidAI/LFM2-1.2B", "LiquidAI/LFM2-2.6B", "LiquidAI/LFM2-700M"],
+    "default": "LiquidAI/LFM2-2.6B"
 }
 VERSION = "AuTron 4 Prism (Elite)"
 DATA_DIR = Path.home() / ".autron-storage"

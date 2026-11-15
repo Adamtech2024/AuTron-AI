@@ -109,12 +109,12 @@ except: SEARCH_AVAILABLE = False
 # CONFIG - FLAGSHIP ULTRA
 # ===============================================================================
 MODELS = {
-    "fast": "sam860/LFM2:350m",
-    "think": ["sam860/LFM2:1.2b", "sam860/LFM2:700m"],
-    "pro": ["sam860/LFM2:1.2b", "sam860/LFM2:1.2b"],
-    "ultra": ["sam860/LFM2:1.2b", "sam860/LFM2:2.6b", "sam860/LFM2:700m"],
-    "extra": ["sam860/LFM2:1.6b"],
-    "default": "sam860/LFM2:1.6b"
+    "fast": "LiquidAI/LFM2-350M",
+    "think": ["LiquidAI/LFM2-1.2B", "LiquidAI/LFM2-700M"],
+    "pro": ["LiquidAI/LFM2-1.2B", "LiquidAI/LFM2-1.2B"],
+    "ultra": ["LiquidAI/LFM2-1.2B", "LiquidAI/LFM2-2.6B", "LiquidAI/LFM2-700M"],
+    "extra": ["LiquidAI/LFM2-1.2B"],
+    "default": "LiquidAI/LFM2-1.2B"
 }
 VERSION = "AuTron 4 Ultra (Titan)"
 DATA_DIR = Path.home() / ".autron-storage"

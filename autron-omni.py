@@ -44,7 +44,7 @@ class UI:
 VERSION = "AuTron 4o (Omni)"
 MODELS = {
     "default": "qwen2.5:1.5b",
-    "research": "sam860/LFM2:1.2b"
+    "research": "LiquidAI/LFM2-1.2B"
 }
 DATA_DIR = Path.home() / ".autron-storage"
 DATA_DIR.mkdir(exist_ok=True)

@@ -82,10 +82,10 @@ except: SEARCH_AVAILABLE = False
 # CONFIG - BALANCED NEO
 # ===============================================================================
 MODELS = {
-    "fast": "sam860/LFM2:700m",
-    "think": ["sam860/LFM2:1.2b", "sam860/LFM2:700m"],
-    "pro": ["sam860/LFM2:1.2b", "sam860/LFM2:700m"],
-    "default": "sam860/LFM2:700m"
+    "fast": "LiquidAI/LFM2-700M",
+    "think": ["LiquidAI/LFM2-1.2B", "LiquidAI/LFM2-700M"],
+    "pro": ["LiquidAI/LFM2-1.2B", "LiquidAI/LFM2-700M"],
+    "default": "LiquidAI/LFM2-700M"
 }
 VERSION = "AuTron 4 Neo (Adaptive)"
 DATA_DIR = Path.home() / ".autron-storage"
