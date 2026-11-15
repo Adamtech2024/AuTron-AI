@@ -5,15 +5,17 @@
 ║             The Deep Research & Intelligence Specialist                       ║
 ╚═══════════════════════════════════════════════════════════════════════════════╝
 
-Requirements: pip install ollama duckduckgo-search rich
+Requirements: pip install ollama requests rich
 """
 
 import os, sys, json, time, re, asyncio, gzip, base64, warnings
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Dict
+from urllib.parse import quote as urlquote
+from html import unescape
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from duckduckgo_search import DDGS
+import requests
 from ollama import chat
 from rich.console import Console
 from rich.panel import Panel
@@ -44,7 +46,7 @@ class UI:
 VERSION = "AuTron 4o (Omni)"
 MODELS = {
     "default": "qwen2.5:1.5b",
-    "research": "sam860/LFM2:1.2b"
+    "research": "LiquidAI/LFM2-1.2B"
 }
 DATA_DIR = Path.home() / ".autron-storage"
 DATA_DIR.mkdir(exist_ok=True)
@@ -53,10 +55,86 @@ DATA_DIR.mkdir(exist_ok=True)
 # SEARCH ENGINE
 # ===============================================================================
 class SearchEngine:
+    """Reliable multi-query research engine.
+
+    Backend 1: Wikipedia Action API (search + plain-text intro extracts) for
+               structured, authoritative facts. Free and keyless; a descriptive
+               User-Agent is required by Wikimedia policy.
+    Backend 2: DuckDuckGo HTML endpoint (html.duckduckgo.com) for fresh news
+               and general web coverage.
+
+    Replaces the deprecated `duckduckgo_search` package, whose silent import
+    failure left Omni with an empty corpus and canned answers."""
+
+    UA = "AuTron-Omni/1.0 (https://github.com/autron-ai/autron; autron@users.noreply.github.com) python-requests"
+    WIKI = "https://en.wikipedia.org/w/api.php"
+    DDG = "https://html.duckduckgo.com/html/"
+
+    @staticmethod
+    def _clean(s: str) -> str:
+        return unescape(re.sub(r"<.*?>", "", s)).strip()
+
+    def _wiki_hits(self, query: str, limit: int = 4) -> List[Dict]:
+        stop = {"who","what","where","when","why","how","is","are","the","a","an","of",
+                "in","on","for","to","and","tell","me","about","current","latest","news"}
+        topic = " ".join(w for w in re.sub(r"[^a-zA-Z0-9 ]", " ", query.lower()).split() if w not in stop) or query
+        out = []
+        for qq in dict.fromkeys([topic, query]):
+            try:
+                r = requests.get(self.WIKI, params={"action":"query","list":"search","srsearch":qq,
+                                                    "srlimit":limit,"format":"json"},
+                                 headers={"User-Agent":self.UA}, timeout=8)
+                titles = [h["title"] for h in r.json()["query"]["search"]]
+                if not titles: continue
+                r2 = requests.get(self.WIKI, params={"action":"query","prop":"extracts","exintro":1,
+                                                     "explaintext":1,"exchars":350,"exlimit":"max",
+                                                     "titles":"|".join(titles),"format":"json"},
+                                  headers={"User-Agent":self.UA}, timeout=8)
+                pages = r2.json().get("query", {}).get("pages", {})
+                for t in titles:
+                    pg = next((p for p in pages.values() if p.get("title") == t), None)
+                    ex = ((pg or {}).get("extract") or "").strip()
+                    if ex:
+                        out.append({"t": t, "b": ex[:300],
+                                    "u": "https://en.wikipedia.org/wiki/" + urlquote(t.replace(" ", "_")),
+                                    "s": "wikipedia"})
+            except Exception: continue
+            if out: break
+        return out
+
+    def _ddg_hits(self, query: str, limit: int = 4) -> List[Dict]:
+        out = []
+        try:
+            r = requests.post(self.DDG, data={"q": query}, headers={"User-Agent":self.UA}, timeout=8)
+            html_txt = r.text
+            if "anomaly" in html_txt[:400].lower(): return out  # rate-limit challenge page
+            links = re.findall(r'<a[^>]*class="result__a"[^>]*>(.*?)</a>', html_txt, re.S)
+            snips = re.findall(r'<a[^>]*class="result__snippet"[^>]*>(.*?)</a>', html_txt, re.S)
+            hrefs = re.findall(r'<a[^>]*class="result__a"[^>]*href="([^"]+)"', html_txt)
+            for i, (l, s) in enumerate(list(zip(links, snips))[:limit]):
+                u = hrefs[i] if i < len(hrefs) else ""
+                t, b = self._clean(l), self._clean(s)
+                if t and b:
+                    out.append({"t": t[:120], "b": b[:300], "u": u, "s": "web"})
+        except Exception: pass
+        return out
+
     async def get_context(self, query: str) -> List[Dict]:
-        """Deep Search Execution with Source Prioritization."""
+        """Deep search execution with source prioritization."""
         def _sync_search():
-            # Smart Query Expansion
+            results, seen = [], set()
+
+            def add(item):
+                k = (item.get("t") or "").lower()
+                if k and k not in seen:
+                    seen.add(k)
+                    results.append(item)
+
+            # 1) Structured facts from Wikipedia
+            for item in self._wiki_hits(query):
+                add(item)
+
+            # 2) Smart query expansion for fresh web/news coverage
             queries = [query]
             if len(query.split()) >= 3:
                 if any(x in query.lower() for x in ["who", "what", "where", "when", "why"]):
@@ -64,30 +142,16 @@ class SearchEngine:
                 if any(x in query.lower() for x in ["latest", "recent", "news"]):
                     queries.append(f"latest official reports {query}")
 
-            # Source Prioritization (Trusted Domains)
-            trusted_domains = [
-                "reuters.com", "apnews.com", "wikipedia.org", "britannica.com",
-                "nature.com", "science.org", "nasa.gov", "nih.gov", "bbc.com",
-                "economist.com", "github.com", "stackoverflow.com"
-            ]
-            
-            # Prioritize domains in search if it's a fact-seeking query
-            if len(query.split()) > 2 and not any(d in query.lower() for d in [".com", ".org", ".net"]):
-                queries.insert(0, f"{query} site:{' OR site:'.join(trusted_domains[:5])}")
+            for q in queries:
+                for item in self._ddg_hits(q):
+                    add(item)
+                if len(results) >= 12: break
 
-            results = []
-            seen_urls = set()
-            with DDGS() as ddgs:
-                for q in queries:
-                    try:
-                        for r in ddgs.text(q, max_results=3):
-                            url = r.get('href')
-                            if url and url not in seen_urls:
-                                results.append({'t': r.get('title'), 'b': r.get('body'), 'u': url})
-                                seen_urls.add(url)
-                    except: continue 
-                    if len(results) >= 12: break
-            return results
+            # 3) Last-resort fallback: broaden the Wikipedia topic reduction
+            if not results:
+                for item in self._wiki_hits(f"{query} facts"):
+                    add(item)
+            return results[:12]
 
         return await asyncio.to_thread(_sync_search)
 
@@ -192,7 +256,7 @@ Follow these special instructions for specific query types:
 
 - Academic Research: Provide long, detailed answers formatted as scientific write-ups.
 - Recent News: Concisely summarize recent news events, group by topics, prioritize diverse perspectives and trustworthy sources. Compare timestamps to prioritize recent events.
-- Weather/Status: Provide very short and direct answers. State the final figure directly.
+- Factual/Lookup Questions: Answer directly and concisely, grounded in the provided sources. State the key fact first, then supporting detail.
 - People: Write a short, comprehensive biography. Don't mix different people together.
 - Coding: Use markdown code blocks. Write code first, explain second.
 - Recipes: Step-by-step instructions with exact measurements.

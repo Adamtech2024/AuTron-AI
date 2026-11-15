@@ -6,10 +6,10 @@ from datetime import datetime, timezone
 ║              Advanced Middle-Ground: Performance & High Intelligence          ║
 ╚═══════════════════════════════════════════════════════════════════════════════╝
 
-Requirements: pip install ollama duckduckgo-search rich
+Requirements: pip install ollama requests rich
 """
 
-import os, sys, json, gzip, time, socket, hashlib, warnings, random, threading
+import os, sys, json, gzip, time, socket, hashlib, warnings, random, threading, re
 from pathlib import Path
 from typing import Optional, List, Dict
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -72,6 +72,15 @@ AuTron has access to web_search and web_fetch for retrieving current information
 - Search the web for current status of roles, fast-changing info, recent news, or fact-checking.
 </search_instructions>
 
+<live_context_rules>
+When the user message contains a "LIVE WEB CONTEXT" block, treat it as freshly retrieved ground truth:
+- Base factual claims on it and cite sources naturally ("according to Wikipedia...", "...reported by AP").
+- If it conflicts with your training data, trust the live context and note that things changed.
+- Never invent URLs, dates, or figures that are not in the context or your knowledge.
+- If the context is empty or irrelevant, answer from your own knowledge and say clearly if you are unsure or possibly outdated.
+- Do NOT talk about the weather unless the user actually asks about weather. Always answer the question that was asked.
+</live_context_rules>
+
 <artifacts>
 AuTron uses artifacts for substantial code (HTML, CSS, JS), technical analysis, data visualizations (Mermaid, SVGs), and comprehensive writing.
 - Constraints: Always prefer modern, clean design. Never use browser-local storage in artifacts. Use React state for interactivity.
@@ -99,20 +108,23 @@ try:
 except: OLLAMA_AVAILABLE = False
 
 try:
-    from duckduckgo_search import DDGS
+    import requests
+    from html import unescape
     SEARCH_AVAILABLE = True
-except: SEARCH_AVAILABLE = False
+except ImportError:
+    SEARCH_AVAILABLE = False
+    print("[!] Missing dependency: pip install requests (web search disabled)")
 
 
 # ===============================================================================
 # CONFIG
 # ===============================================================================
 MODELS = {
-    "fast": "sam860/LFM2:350m",
-    "think": ["sam860/LFM2:1.2b", "sam860/LFM2:1.2b"],
-    "pro": ["sam860/LFM2:1.2b", "sam860/LFM2:2.6b"],
-    "ultra": ["sam860/LFM2:1.2b", "sam860/LFM2:2.6b", "sam860/LFM2:700m"],
-    "default": "sam860/LFM2:2.6b"
+    "fast": "LiquidAI/LFM2-350M",
+    "think": ["LiquidAI/LFM2-1.2B", "LiquidAI/LFM2-1.2B"],
+    "pro": ["LiquidAI/LFM2-1.2B", "LiquidAI/LFM2-2.6B"],
+    "ultra": ["LiquidAI/LFM2-1.2B", "LiquidAI/LFM2-2.6B", "LiquidAI/LFM2-700M"],
+    "default": "LiquidAI/LFM2-2.6B"
 }
 VERSION = "AuTron 4 Prism (Elite)"
 DATA_DIR = Path.home() / ".autron-storage"
@@ -143,7 +155,7 @@ out = Output()
 
 def is_online() -> bool:
     try:
-        socket.create_connection(("8.8.8.8", 53), timeout=0.3).close()
+        socket.create_connection(("8.8.8.8", 53), timeout=2.0).close()
         return True
     except: return False
 
@@ -214,30 +226,127 @@ class Knowledge:
 # SEARCH & LEARN
 # ===============================================================================
 class TurboSearch:
+    """Reliable web knowledge engine.
+
+    Backend 1: Wikipedia Action API (search + plain-text intro extracts). Free,
+               keyless; requires a descriptive User-Agent per Wikimedia policy.
+    Backend 2: DuckDuckGo HTML endpoint (html.duckduckgo.com) as a fallback for
+               current events / anything Wikipedia does not cover.
+
+    The previously used `duckduckgo_search` package was renamed to `ddgs`; its
+    old import path failed silently, every lookup returned [] and the model
+    answered from stale training data. This engine uses only `requests`.
+    """
+
+    WIKI_API = "https://en.wikipedia.org/w/api.php"
+    DDG_HTML = "https://html.duckduckgo.com/html/"
+    UA = "AuTron/1.0 (https://github.com/autron-ai/autron; autron@users.noreply.github.com) python-requests"
+    STOPWORDS = {
+        "who", "what", "where", "when", "why", "how", "is", "are", "was", "were",
+        "the", "a", "an", "of", "in", "on", "for", "to", "and", "or", "do", "does",
+        "did", "can", "could", "would", "should", "i", "you", "it", "its", "tell",
+        "me", "about", "please", "explain", "define", "definition", "current",
+        "latest", "news", "today", "now", "really", "just",
+    }
+
     def __init__(self, knowledge):
         self.k = knowledge
-        self.ddgs = DDGS() if SEARCH_AVAILABLE else None
-    
+
+    # -- public API ------------------------------------------------------
     def search(self, query: str, max_results: int = 5) -> List[Dict]:
-        if not SEARCH_AVAILABLE or not is_online(): return []
-        try:
-            results = []
-            with ThreadPoolExecutor(max_workers=5) as executor:
-                future = executor.submit(self._fetch, query, max_results)
-                try: results = future.result(timeout=4)
-                except: pass
-            return results
-        except: return []
-    
-    def _fetch(self, query: str, max_results: int) -> List[Dict]:
-        results = []
-        for r in self.ddgs.text(query, max_results=max_results):
-            results.append({"t": r.get("title", "")[:100], "b": r.get("body", "")[:250]})
-        return results
-    
+        if not is_online(): return []
+        results = self._wiki(query, max_results)
+        if len(results) < max(1, min(2, max_results)):
+            results += self._ddg_html(query, max_results - len(results))
+        seen, uniq = set(), []
+        for r in results:
+            key = r["t"].lower()
+            if key not in seen:
+                seen.add(key); uniq.append(r)
+        return uniq[:max_results]
+
+    def needs_lookup(self, q_lower: str) -> bool:
+        """Decide whether a question should be grounded with live context.
+        Any factual who/what/where/when/why/how style question triggers a
+        lookup - not just the handful of keywords the old version matched."""
+        fast_hits = ["latest", "news", "current", "weather", "time", "today",
+                     "now", "who is", "who are", "what is", "what are", "where is",
+                     "where are", "when is", "when was", "why is", "why do",
+                     "how much", "how many", "how do", "how does", "tell me about"]
+        if any(x in q_lower for x in fast_hits): return True
+        words = set(re.sub(r"[^a-z0-9 ?]", " ", q_lower).split())
+        if "?" in q_lower and words & {"who", "what", "where", "when", "why", "how", "which"}:
+            return True
+        return False
+
     def format(self, results: List[Dict]) -> str:
         if not results: return ""
-        return "\n".join(f"• {r['t']}: {r['b']}" for r in results[:5])
+        lines = ["WEB REFERENCES (background only; do NOT restate or summarize these. Answer the user's actual question below them):\n"]
+        for r in results[:5]:
+            src = f" ({r['s']})" if r.get("s") else ""
+            lines.append(f"- {r['t']}{src}: {r['b']}")
+        return "\n".join(lines)
+
+    # -- helpers -----------------------------------------------------------
+    def _topic(self, query: str) -> str:
+        """Reduce a natural-language question to searchable keywords."""
+        q = re.sub(r"[^a-zA-Z0-9 ]", " ", query.lower())
+        keep = [w for w in q.split() if w and w not in self.STOPWORDS]
+        return " ".join(keep) or query.strip()
+
+    def _get(self, url, params=None, data=None, timeout=6):
+        try:
+            if data:
+                r = requests.post(url, data=data, headers={"User-Agent": self.UA}, timeout=timeout)
+            else:
+                r = requests.get(url, params=params, headers={"User-Agent": self.UA}, timeout=timeout)
+            if r.status_code == 200 and r.text.strip(): return r
+        except Exception: pass
+        return None
+
+    # -- backend 1: Wikipedia ---------------------------------------------
+    def _wiki(self, query: str, max_results: int) -> List[Dict]:
+        topic = self._topic(query)
+        if not topic: return []
+        out = []
+        r = self._get(self.WIKI_API, params={
+            "action": "query", "list": "search", "srsearch": topic,
+            "srlimit": max(1, min(max_results, 5)), "format": "json"})
+        if not r: return []
+        try: hits = r.json()["query"]["search"]
+        except Exception: return []
+        titles = [h["title"] for h in hits]
+        if not titles: return []
+        r2 = self._get(self.WIKI_API, params={
+            "action": "query", "prop": "extracts", "exintro": 1, "explaintext": 1,
+            "exchars": 350, "exlimit": "max", "titles": "|".join(titles), "format": "json"})
+        pages = {}
+        if r2:
+            try: pages = r2.json()["query"]["pages"]
+            except Exception: pass
+        for t in titles:
+            page = next((p for p in pages.values() if p.get("title") == t), None)
+            text = (page or {}).get("extract", "") or next((h.get("snippet", "") for h in hits if h["title"] == t), "")
+            text = re.sub(r"<[^>]+>", "", text).strip()
+            if text:
+                out.append({"t": t, "b": text[:300], "s": "wikipedia"})
+        return out
+
+    # -- backend 2: DuckDuckGo HTML ---------------------------------------
+    def _ddg_html(self, query: str, max_results: int) -> List[Dict]:
+        if max_results <= 0: return []
+        r = self._get(self.DDG_HTML, data={"q": query}, timeout=6)
+        if not r: return []
+        html_txt = r.text
+        if "anomaly" in html_txt[:400].lower(): return []  # rate-limit challenge page
+        links = re.findall(r'<a[^>]*class="result__a"[^>]*>(.*?)</a>', html_txt, re.S)
+        snips = re.findall(r'<a[^>]*class="result__snippet"[^>]*>(.*?)</a>', html_txt, re.S)
+        clean = lambda s: unescape(re.sub(r"<.*?>", "", s)).strip()
+        out = []
+        for l, s in list(zip(links, snips))[:max_results]:
+            t, b = clean(l), clean(s)
+            if t and b: out.append({"t": t[:100], "b": b[:250], "s": "web"})
+        return out
 
 class AutoLearner:
     def __init__(self, search, knowledge):
@@ -384,12 +493,12 @@ class AuTron:
     def query(self, q, force_mode=None):
         mode = force_mode or self.mode
         ctx = ""
-        if is_online() and any(x in q.lower() for x in ["latest", "news", "current", "weather", "time", "today", "now", "who is", "what is"]):
+        if is_online() and self.search.needs_lookup(q.lower()):
             results = self.search.search(q, max_results=3)
             ctx = self.search.format(results)
             
         system_prompt = get_system_prompt(VERSION)
-        prompt = f"Context:\n{ctx}\n\nQ: {q}\nA:" if ctx else q
+        prompt = f"{ctx}\n\nQuestion: {q}\nAnswer the Question directly and stay on topic." if ctx else q
         msgs = [{"role": "system", "content": system_prompt}] + self.conv.history + [{"role": "user", "content": prompt}]
         
         target_model = MODELS.get(mode, MODELS["default"])
