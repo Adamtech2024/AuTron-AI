@@ -283,7 +283,7 @@ class TurboSearch:
 
     def format(self, results: List[Dict]) -> str:
         if not results: return ""
-        lines = ["LIVE WEB CONTEXT (retrieved " + time.strftime("%Y-%m-%d %H:%M") + " - prefer this over your training data when it conflicts):\n"]
+        lines = ["WEB REFERENCES (background only; do NOT restate or summarize these. Answer the user's actual question below them):\n"]
         for r in results[:5]:
             src = f" ({r['s']})" if r.get("s") else ""
             lines.append(f"- {r['t']}{src}: {r['b']}")
@@ -503,7 +503,7 @@ class AuTron:
             ctx = self.search.format(results)
             
         system_prompt = get_system_prompt(VERSION)
-        prompt = f"Context:\n{ctx}\n\nQ: {q}\nA:" if ctx else q
+        prompt = f"{ctx}\n\nQuestion: {q}\nAnswer the Question directly and stay on topic." if ctx else q
         msgs = [{"role": "system", "content": system_prompt}] + self.conv.history + [{"role": "user", "content": prompt}]
         
         target_model = MODELS.get(mode, MODELS["default"])
