@@ -29,7 +29,7 @@ The most powerful version, designed for complex problem-solving and multi-layere
 - **Think (1.2B + 700M)**: Strategic synthesis for analytical problems.
 - **Pro (1.2B + 1.2B)**: Advanced dual-brain reasoning for professional tasks.
 - **Ultra (1.2B + 2.6B + 700M)**: Triple-brain flagship mode for maximum complexity.
-- **Extra (1.6B)**: Specialized model for niche logic handling.
+- **Extra (1.2B)**: Specialized model for niche logic handling.
 
 ## 💎 AuTron 4 Prism
 **The Advanced Middle-Ground: Performance & High Intelligence**
